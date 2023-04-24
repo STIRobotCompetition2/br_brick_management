@@ -92,15 +92,11 @@ class BrickMapper : public rclcpp::Node {
         bounds.col(1) = projection.row(0).transpose() * dx - projection.row(1).transpose() * dy;
         bounds.col(2) = -projection.row(0).transpose() * dx + projection.row(1).transpose() * dy;
         bounds.col(3) = -projection.row(0).transpose() * dx - projection.row(1).transpose() * dy;
-        std::cerr << bounds << std::endl << std::endl;
 
         
 
         for(double x = bounds.row(0).minCoeff(); x <= bounds.row(0).maxCoeff(); x+=map->getResolution() * 0.999)
         for(double y = bounds.row(1).minCoeff(); y <= bounds.row(1).maxCoeff(); y+=map->getResolution() * 0.999){
-            // double exponent = -1 * (Eigen::Vector2d(x, y) - position).cwiseProduct(Eigen::Vector2d(x, y) - position).dot(Eigen::Vector2d(1/vx, 1/vy));
-            // map->atPosition("bricks", grid_map::Position(x,y)) = std::exp(exponent);
-            RCLCPP_INFO(this->get_logger(), "Hi %f, %f", x, y);
 
             grid_map::Position map_position(x + position.x(), y + position.y());
 
@@ -144,7 +140,6 @@ class BrickMapper : public rclcpp::Node {
             }
 
             t_eigen = tf2::transformToEigen(t);
-            std::cerr << "Q" << t_eigen.rotation() << std::endl << std::endl;
             position = t_eigen.matrix() * Eigen::Vector4d(m.pose.position.x, m.pose.position.y, 0.0, 1.0);
 
             
