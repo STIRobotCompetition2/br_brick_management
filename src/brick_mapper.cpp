@@ -8,6 +8,12 @@
 #include <chrono>
 #include <mutex>
 
+#include "tf2/exceptions.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_eigen/tf2_eigen.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+
 
 
 
@@ -20,9 +26,11 @@
 
 
 
+
 #define DECAY 0.1
 #define DETECTION_THRESHOLD 0.2
 #define KERNEL_SIZE 0.5
+#define MAP_FRAME "arena"
 
 // #include <tf2_ros/transform_listener.h>
 
@@ -31,13 +39,16 @@
 
 using std::placeholders::_1;
 
+
 class BrickMapper : public rclcpp::Node {
     public:
     BrickMapper() : Node("brick_mapper") {
         brick_detector_array_sub = this->create_subscription<visualization_msgs::msg::MarkerArray>("/marker_array", 5, std::bind(&BrickMapper::bufferMarkerArray, this, _1));
         brick_detector_single_sub = this->create_subscription<visualization_msgs::msg::Marker>("/marker_single", 5, std::bind(&BrickMapper::bufferMarkerSingle, this, _1));
+        tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+        tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
-        process_map_timer = this->create_wall_timer(std::chrono::milliseconds(5000), std::bind(&BrickMapper::updateMap, this));
+        process_map_timer = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&BrickMapper::updateMap, this));
         grid_map_pub = this->create_publisher<grid_map_msgs::msg::GridMap>("/brick_grid_map", 1);
         rclcpp::QoS map_qos(10);  // initialize to default
         if (true) {
@@ -48,7 +59,7 @@ class BrickMapper : public rclcpp::Node {
         cost_map_pub = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/brick_cost_map", map_qos);
 
         map = std::make_shared<grid_map::GridMap>(grid_map::GridMap());
-        map->setFrameId("arena");
+        map->setFrameId(MAP_FRAME);
         map->setGeometry(grid_map::Length(9.0,9.0), 0.02, Eigen::Vector2d(4.0, 4.0));
         RCLCPP_INFO(this->get_logger(), "Created map with size %f x %f m (%i x %i cells).",
          map->getLength().x(), map->getLength().y(),
@@ -56,7 +67,6 @@ class BrickMapper : public rclcpp::Node {
         map->add("bricks", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
         // map->atPosition("bricks", grid_map::Position(1,1)) = 5;
         addKernel(Eigen::Vector2d(3,3), 0.5, 1);
-        
         
 
 
@@ -101,9 +111,37 @@ class BrickMapper : public rclcpp::Node {
 
     }
     void updateMap(){
+        geometry_msgs::msg::TransformStamped t;
+        Eigen::Isometry3d t_eigen;
+        Eigen::Vector4d position;
+
+        
+
+
         marker_buffer_lock.lock();
+
         for(visualization_msgs::msg::Marker m : this->marker_buffer){
-            if(addKernel(Eigen::Vector2d(m.pose.position.x, m.pose.position.y) ,KERNEL_SIZE, KERNEL_SIZE))
+
+            // Look up for the transformation between target_frame and turtle2 frames
+            // and send velocity commands for turtle2 to reach target_frame
+            try {
+                t = tf_buffer->lookupTransform(MAP_FRAME, m.header.frame_id, this->get_clock()->now());
+            } 
+            catch (const tf2::TransformException & ex) {
+                RCLCPP_WARN(
+                    this->get_logger(), "Could not transform %s to %s: %s",
+                    m.header.frame_id.c_str(), MAP_FRAME, ex.what());
+                continue;
+            }
+
+            t_eigen = tf2::transformToEigen(t);
+            std::cerr << "Q" << t_eigen.rotation() << std::endl << std::endl;
+            position = t_eigen.matrix() * Eigen::Vector4d(m.pose.position.x, m.pose.position.y, 0.0, 1.0);
+
+
+            
+
+            if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,KERNEL_SIZE, KERNEL_SIZE))
                 RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
             else
                 RCLCPP_WARN(this->get_logger(), "Could not add kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
@@ -131,7 +169,7 @@ class BrickMapper : public rclcpp::Node {
         }
         nav_msgs::msg::OccupancyGrid costmap;
         grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, DETECTION_THRESHOLD, costmap);
-        costmap.header.frame_id = "arena";
+        costmap.header.frame_id = MAP_FRAME;
         costmap.header.stamp = this->get_clock()->now();
 
         cost_map_pub->publish(costmap);
@@ -162,6 +200,9 @@ class BrickMapper : public rclcpp::Node {
     std::shared_ptr<grid_map::GridMap> map;
     std::vector<visualization_msgs::msg::Marker> marker_buffer;
     std::mutex marker_buffer_lock;
+    
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener{nullptr};
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer;
 };
 
 int main(int argc, char** argv){

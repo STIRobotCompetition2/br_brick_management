@@ -18,6 +18,11 @@ find_package(grid_map_core REQUIRED)
 find_package(grid_map_msgs REQUIRED)
 find_package(grid_map_ros REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_eigen REQUIRED)
+
+
 
 
 
@@ -64,6 +69,9 @@ ament_target_dependencies(
   grid_map_ros
   grid_map_msgs
   nav2_msgs
+  tf2_ros
+  geometry_msgs
+  tf2_eigen
 )
 
 
