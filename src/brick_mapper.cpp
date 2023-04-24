@@ -94,15 +94,15 @@ class BrickMapper : public rclcpp::Node {
         // }
         if(! map->isInside(grid_map::Position(position.x(),position.y()))) return false;
 
-        for(double x = position.x() - 2*vx; x < position.x() + 2*vx; x+=map->getResolution() * 0.95)
-        for(double y = position.y() - 2*vy; y < position.y() + 2*vy; y+=map->getResolution() * 0.95){
+        for(double x = position.x() - 2*vx; x < position.x() + 2*vx; x+=map->getResolution() * 0.999)
+        for(double y = position.y() - 2*vy; y < position.y() + 2*vy; y+=map->getResolution() * 0.999){
             // double exponent = -1 * (Eigen::Vector2d(x, y) - position).cwiseProduct(Eigen::Vector2d(x, y) - position).dot(Eigen::Vector2d(1/vx, 1/vy));
             // map->atPosition("bricks", grid_map::Position(x,y)) = std::exp(exponent);
             if(! map->isInside(grid_map::Position(x,y))){
                 continue;
             }
 
-            map->atPosition("bricks", grid_map::Position(x,y)) = std::cos(std::fabs(x - position.x()) / (2 * vx) * M_PI_2) * std::cos(std::fabs(y - position.y()) / (2 * vy) * M_PI_2);
+            map->atPosition("bricks", grid_map::Position(x,y)) += std::cos(std::fabs(x - position.x()) / (2 * vx) * M_PI_2) * std::cos(std::fabs(y - position.y()) / (2 * vy) * M_PI_2);
         }
         return true;
 
@@ -162,10 +162,10 @@ class BrickMapper : public rclcpp::Node {
             grid_map::Position max_position;
             this->map->getPosition(max_index, max_position);
             RCLCPP_INFO(this->get_logger(), "Found valid maximum at %f %f", max_position.x(), max_position.y());
-            for(grid_map::CircleIterator it(*map, max_position, 0.3); !it.isPastEnd(); ++it){
-                map->at("bricks", *it) = 0.0;
+            // for(grid_map::CircleIterator it(*map, max_position, 0.3); !it.isPastEnd(); ++it){
+            //     map->at("bricks", *it) = 0.0;
 
-            }
+            // }
         }
         nav_msgs::msg::OccupancyGrid costmap;
         grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, DETECTION_THRESHOLD, costmap);
