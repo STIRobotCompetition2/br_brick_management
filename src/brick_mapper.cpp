@@ -29,7 +29,9 @@
 
 #define DECAY 0.1
 #define DETECTION_THRESHOLD 0.2
-#define KERNEL_SIZE 0.5
+#define KERNEL_SIZE_X 0.5
+#define KERNEL_SIZE_Y 0.2
+
 #define MAP_FRAME "arena"
 
 // #include <tf2_ros/transform_listener.h>
@@ -78,7 +80,7 @@ class BrickMapper : public rclcpp::Node {
 
 
     private:
-    bool addKernel(const Eigen::Vector2d position, const double vx, const double vy){
+    bool addKernel(const Eigen::Vector2d position, const double dx, const double dy, const double yaw = 0.0, const double height = 1.0){
         // grid_map::Index start_idx, end_idx;
         // map->getIndex(grid_map::Position(position + Eigen::Vector2d(-2*vx, -2*vy)), start_idx);
         // map->getIndex(grid_map::Position(position + Eigen::Vector2d(2*vx, 2*vy)), end_idx);
@@ -92,17 +94,38 @@ class BrickMapper : public rclcpp::Node {
         //     i++;
         //     map->at("bricks", *it) = 1.0;
         // }
+
+
         if(! map->isInside(grid_map::Position(position.x(),position.y()))) return false;
 
-        for(double x = position.x() - 2*vx; x < position.x() + 2*vx; x+=map->getResolution() * 0.999)
-        for(double y = position.y() - 2*vy; y < position.y() + 2*vy; y+=map->getResolution() * 0.999){
+        Eigen::Matrix2d projection;
+        projection << std::cos(yaw), std::sin(yaw), -std::sin(yaw), std::cos(yaw);
+        
+        Eigen::Matrix<double, 2, 4> bounds;
+        bounds.col(0) = projection.row(0).transpose() * dx + projection.row(1).transpose() * dy;
+        bounds.col(1) = projection.row(0).transpose() * dx - projection.row(1).transpose() * dy;
+        bounds.col(2) = -projection.row(0).transpose() * dx + projection.row(1).transpose() * dy;
+        bounds.col(3) = -projection.row(0).transpose() * dx - projection.row(1).transpose() * dy;
+        std::cerr << bounds << std::endl << std::endl;
+
+        
+
+        for(double x = bounds.row(0).minCoeff(); x <= bounds.row(0).maxCoeff(); x+=map->getResolution() * 0.999)
+        for(double y = bounds.row(1).minCoeff(); y <= bounds.row(1).maxCoeff(); y+=map->getResolution() * 0.999){
             // double exponent = -1 * (Eigen::Vector2d(x, y) - position).cwiseProduct(Eigen::Vector2d(x, y) - position).dot(Eigen::Vector2d(1/vx, 1/vy));
             // map->atPosition("bricks", grid_map::Position(x,y)) = std::exp(exponent);
-            if(! map->isInside(grid_map::Position(x,y))){
+            RCLCPP_INFO(this->get_logger(), "Hi %f, %f", x, y);
+
+            grid_map::Position map_position(x + position.x(), y + position.y());
+
+            if(! map->isInside(map_position)){
                 continue;
             }
+            Eigen::Vector2d diff(x, y);
+            diff = projection * diff;
+            if(std::fabs(diff.x()) > dx || std::fabs(diff.y()) > dy) continue;
 
-            map->atPosition("bricks", grid_map::Position(x,y)) += std::cos(std::fabs(x - position.x()) / (2 * vx) * M_PI_2) * std::cos(std::fabs(y - position.y()) / (2 * vy) * M_PI_2);
+            map->atPosition("bricks", map_position) += height * std::cos(std::fabs(diff.x()) / dx * M_PI_2) * std::cos(std::fabs(diff.y()) / dy * M_PI_2);
         }
         return true;
 
@@ -138,13 +161,12 @@ class BrickMapper : public rclcpp::Node {
             std::cerr << "Q" << t_eigen.rotation() << std::endl << std::endl;
             position = t_eigen.matrix() * Eigen::Vector4d(m.pose.position.x, m.pose.position.y, 0.0, 1.0);
 
-
             
 
-            if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,KERNEL_SIZE, KERNEL_SIZE))
-                RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
+            if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,KERNEL_SIZE_X, KERNEL_SIZE_Y, 2 * std::atan2(t.transform.rotation.z, t.transform.rotation.w)))
+                RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE_X, KERNEL_SIZE_Y);
             else
-                RCLCPP_WARN(this->get_logger(), "Could not add kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
+                RCLCPP_WARN(this->get_logger(), "Could not add kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE_X, KERNEL_SIZE_Y);
 
         }
         this->marker_buffer.clear();
