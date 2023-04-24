@@ -27,7 +27,9 @@
 
 
 
-#define DECAY 0.1
+#define DECAY_THRESH 1e-2
+#define DECAY_FACTOR 0.95
+
 #define DETECTION_THRESHOLD 0.2
 #define KERNEL_SIZE_X 0.5
 #define KERNEL_SIZE_Y 0.2
@@ -127,8 +129,6 @@ class BrickMapper : public rclcpp::Node {
 
         for(visualization_msgs::msg::Marker m : this->marker_buffer){
 
-            // Look up for the transformation between target_frame and turtle2 frames
-            // and send velocity commands for turtle2 to reach target_frame
             try {
                 t = tf_buffer->lookupTransform(MAP_FRAME, m.header.frame_id, this->get_clock()->now());
             } 
@@ -142,9 +142,11 @@ class BrickMapper : public rclcpp::Node {
             t_eigen = tf2::transformToEigen(t);
             position = t_eigen.matrix() * Eigen::Vector4d(m.pose.position.x, m.pose.position.y, 0.0, 1.0);
 
-            
+            if(!(m.type == m.SPHERE || m.type == m.CUBE || m.type == m.CYLINDER)) {
+                RCLCPP_WARN(this->get_logger(), "Receiver marker of type %u but need %u, %u, or %u. Continuing, but gridmap may be compromised ...", m.type, m.SPHERE, m.CUBE, m.CYLINDER);
+            }
 
-            if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,KERNEL_SIZE_X, KERNEL_SIZE_Y, 2 * std::atan2(t.transform.rotation.z, t.transform.rotation.w)))
+            if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,m.scale.x, m.scale.y, 2 * std::atan2(t.transform.rotation.z, t.transform.rotation.w), m.scale.z))
                 RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE_X, KERNEL_SIZE_Y);
             else
                 RCLCPP_WARN(this->get_logger(), "Could not add kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE_X, KERNEL_SIZE_Y);
@@ -155,7 +157,8 @@ class BrickMapper : public rclcpp::Node {
         double max_value = std::numeric_limits<double>::min();
         grid_map::Index max_index;
         for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
-            map->at("bricks", *it) = std::max(0.0, map->at("bricks", *it) - DECAY);
+            map->at("bricks", *it) *= DECAY_FACTOR;
+            if(map->at("bricks", *it) < DECAY_THRESH) map->at("bricks", *it) = 0.0;
             if(map->at("bricks", *it) > max_value){
                 max_value = map->at("bricks", *it);
                 max_index = *it;    
