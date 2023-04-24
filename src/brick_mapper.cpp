@@ -81,20 +81,6 @@ class BrickMapper : public rclcpp::Node {
 
     private:
     bool addKernel(const Eigen::Vector2d position, const double dx, const double dy, const double yaw = 0.0, const double height = 1.0){
-        // grid_map::Index start_idx, end_idx;
-        // map->getIndex(grid_map::Position(position + Eigen::Vector2d(-2*vx, -2*vy)), start_idx);
-        // map->getIndex(grid_map::Position(position + Eigen::Vector2d(2*vx, 2*vy)), end_idx);
-        
-        // size_t i = 0;
-        // for (grid_map::SubmapIterator it(*map, start_idx, start_idx - end_idx); !it.isPastEnd(); ++it) {
-        //     std::cerr << "A" << i << std::endl;
-        //     std::cerr << "B" << start_idx << std::endl;
-        //     std::cerr << "C" << end_idx << std::endl;
-
-        //     i++;
-        //     map->at("bricks", *it) = 1.0;
-        // }
-
 
         if(! map->isInside(grid_map::Position(position.x(),position.y()))) return false;
 
