@@ -1,7 +1,12 @@
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+
 #include <grid_map_core/GridMap.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
+
+#include <chrono>
+#include <mutex>
 
 
 
@@ -17,6 +22,7 @@
 
 #define DECAY 0.1
 #define DETECTION_THRESHOLD 0.2
+#define KERNEL_SIZE 0.5
 
 // #include <tf2_ros/transform_listener.h>
 
@@ -28,8 +34,10 @@ using std::placeholders::_1;
 class BrickMapper : public rclcpp::Node {
     public:
     BrickMapper() : Node("brick_mapper") {
-        brick_detector_sub = this->create_subscription<visualization_msgs::msg::MarkerArray>("/viz", 5, std::bind(&BrickMapper::updateMap, this, _1));
-        process_map_timer = this->create_wall_timer(std::chrono::milliseconds(5000), std::bind(&BrickMapper::processMap, this));
+        brick_detector_array_sub = this->create_subscription<visualization_msgs::msg::MarkerArray>("/marker_array", 5, std::bind(&BrickMapper::bufferMarkerArray, this, _1));
+        brick_detector_single_sub = this->create_subscription<visualization_msgs::msg::Marker>("/marker_single", 5, std::bind(&BrickMapper::bufferMarkerSingle, this, _1));
+
+        process_map_timer = this->create_wall_timer(std::chrono::milliseconds(5000), std::bind(&BrickMapper::updateMap, this));
         grid_map_pub = this->create_publisher<grid_map_msgs::msg::GridMap>("/brick_grid_map", 1);
         rclcpp::QoS map_qos(10);  // initialize to default
         if (true) {
@@ -60,7 +68,7 @@ class BrickMapper : public rclcpp::Node {
 
 
     private:
-    void addKernel(const Eigen::Vector2d position, const double vx, const double vy){
+    bool addKernel(const Eigen::Vector2d position, const double vx, const double vy){
         // grid_map::Index start_idx, end_idx;
         // map->getIndex(grid_map::Position(position + Eigen::Vector2d(-2*vx, -2*vy)), start_idx);
         // map->getIndex(grid_map::Position(position + Eigen::Vector2d(2*vx, 2*vy)), end_idx);
@@ -74,21 +82,35 @@ class BrickMapper : public rclcpp::Node {
         //     i++;
         //     map->at("bricks", *it) = 1.0;
         // }
-        
-        
+        if(! map->isInside(grid_map::Position(position.x(),position.y()))) return false;
 
         for(double x = position.x() - 2*vx; x < position.x() + 2*vx; x+=map->getResolution() * 0.95)
         for(double y = position.y() - 2*vy; y < position.y() + 2*vy; y+=map->getResolution() * 0.95){
             // double exponent = -1 * (Eigen::Vector2d(x, y) - position).cwiseProduct(Eigen::Vector2d(x, y) - position).dot(Eigen::Vector2d(1/vx, 1/vy));
             // map->atPosition("bricks", grid_map::Position(x,y)) = std::exp(exponent);
+            if(! map->isInside(grid_map::Position(x,y))){
+                continue;
+            }
 
             map->atPosition("bricks", grid_map::Position(x,y)) = std::cos(std::fabs(x - position.x()) / (2 * vx) * M_PI_2) * std::cos(std::fabs(y - position.y()) / (2 * vy) * M_PI_2);
         }
+        return true;
+
          
 
 
     }
-    void processMap(){
+    void updateMap(){
+        marker_buffer_lock.lock();
+        for(visualization_msgs::msg::Marker m : this->marker_buffer){
+            if(addKernel(Eigen::Vector2d(m.pose.position.x, m.pose.position.y) ,KERNEL_SIZE, KERNEL_SIZE))
+                RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
+            else
+                RCLCPP_WARN(this->get_logger(), "Could not add kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, KERNEL_SIZE, KERNEL_SIZE);
+
+        }
+        this->marker_buffer.clear();
+        marker_buffer_lock.unlock();
         double max_value = std::numeric_limits<double>::min();
         grid_map::Index max_index;
         for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
@@ -119,16 +141,27 @@ class BrickMapper : public rclcpp::Node {
 
         this->grid_map_pub->publish(grid_map::GridMapRosConverter::toMessage(*this->map));
     }
-    void updateMap(std::shared_ptr<visualization_msgs::msg::MarkerArray> brick_detections){
-        map->setTimestamp(brick_detections->markers.at(0).header.stamp.nanosec);
+    void bufferMarkerArray(std::shared_ptr<visualization_msgs::msg::MarkerArray> brick_detections){
+        marker_buffer_lock.lock();
+        marker_buffer.insert(marker_buffer.end(), brick_detections->markers.begin(), brick_detections->markers.end());
+        marker_buffer_lock.unlock();
     }
-    rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr brick_detector_sub;
+    void bufferMarkerSingle(std::shared_ptr<visualization_msgs::msg::Marker> brick_detection){
+        marker_buffer_lock.lock();
+        marker_buffer.push_back(*brick_detection);
+        marker_buffer_lock.unlock();
+    }
+    rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr brick_detector_array_sub;
+    rclcpp::Subscription<visualization_msgs::msg::Marker>::SharedPtr brick_detector_single_sub;
+
     rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr cost_map_pub;
 
 
     rclcpp::TimerBase::SharedPtr process_map_timer;
     std::shared_ptr<grid_map::GridMap> map;
+    std::vector<visualization_msgs::msg::Marker> marker_buffer;
+    std::mutex marker_buffer_lock;
 };
 
 int main(int argc, char** argv){
