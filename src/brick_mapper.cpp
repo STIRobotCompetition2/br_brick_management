@@ -36,7 +36,8 @@
 
 
 #define DECAY_THRESH 1e-2
-#define DECAY_FACTOR 0.95
+#define DECAY_FACTOR_ACTIVE 0.7
+#define DECAY_FACTOR_PASSIVE 1-1e-9
 
 #define DETECTION_THRESHOLD 0.2
 #define DELETE_THRESHOLD 0.02
@@ -101,17 +102,10 @@ class BrickMapper : public rclcpp::Node {
             map->getSize()(0), map->getSize()(1)
         );
         map->add("bricks", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
-        // map->atPosition("bricks", grid_map::Position(1,1)) = 5;
-        // addKernel(Eigen::Vector2d(3,3), 0.5, 1);
-        
-        valid_map = std::make_shared<grid_map::GridMap>(grid_map::GridMap());
-        valid_map->setFrameId(MAP_FRAME);
-        valid_map->setGeometry(grid_map::Length(9.0,9.0), 0.02, Eigen::Vector2d(4.0, 4.0));
-        valid_map->add("valid", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(valid_map->getSize()(0), valid_map->getSize()(1)));
+        map->add("valid", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
+        map->add("obstacle", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
         
     }
-
-
 
 
 
@@ -126,6 +120,11 @@ class BrickMapper : public rclcpp::Node {
             RCLCPP_ERROR(this->get_logger(), "Tried to set active but was already active");
             response->success = false;
             response->message = "Tried to set active but was already active";
+            nav_msgs::msg::OccupancyGrid costmap;
+            grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, std::numeric_limits<double>::max(), costmap);
+            costmap.header.frame_id = MAP_FRAME;
+            costmap.header.stamp = this->get_clock()->now();
+            for(size_t i = 0; i < 5; i++) cost_map_pub->publish(costmap);
         }
         else{
             this->state = BrickMapperState::ACTIVE;
@@ -135,25 +134,46 @@ class BrickMapper : public rclcpp::Node {
         }
     }
 
-    bool fuseValidMaps(const grid_map::GridMap to_process){
-        for(grid_map::GridMapIterator it(*valid_map); !it.isPastEnd(); ++it){
+    bool updateObstacleMap(){
+        for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
             grid_map::Position position;
-            valid_map->getPosition(*it, position);
-            if(valid_map->at("valid", *it) == VALID_CODE_OCCUPIED_COLLECTED) continue;
+            map->getPosition(*it, position);
+            if(map->at("valid", *it) == VALID_CODE_OCCUPIED_COLLECTED) {
+                map->at("obstacle", *it) = 0.0;
+                continue;
+            }
+            if(state == BrickMapperState::PASSIVE){
+                if(map->at("bricks", *it) > OBSTACLE_THRESHOLD) map->at("obstacle", *it) = OBSTACLE_THRESHOLD;
+                else map->at("obstacle", *it) = 0.0;
+            }
+            else map->at("obstacle", *it) = 0.0;
+
+
+            
+
+        }
+    }
+
+    bool fuseValidMaps(const grid_map::GridMap to_process){
+        for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
+            grid_map::Position position;
+            map->getPosition(*it, position);
+            if(map->at("valid", *it) == VALID_CODE_OCCUPIED_COLLECTED) continue;
             if(to_process.atPosition("clear", position) < 2.5 && to_process.atPosition("clear", position) > 1.5){
                 RCLCPP_DEBUG(this->get_logger(), "Fuse Valid Maps called with clear-region request");
-                valid_map->at("valid", *it) = VALID_CODE_OCCUPIED_COLLECTED;
+                map->at("valid", *it) = VALID_CODE_OCCUPIED_COLLECTED;
             }
             else if(to_process.atPosition("clear", position) > 2.5){
                 RCLCPP_DEBUG(this->get_logger(), "Fuse Valid Maps called with validmap-pub request");
-                valid_map->at("valid", *it) = VALID_CODE_OCCUPIED_VALIDMAPPUB;
+                map->at("valid", *it) = VALID_CODE_OCCUPIED_VALIDMAPPUB;
             }
             else if(to_process.atPosition("clear", position) < 0.5){
-                valid_map->at("valid", *it) = VALID_CODE_FREE;
+                map->at("valid", *it) = VALID_CODE_FREE;
             }
-            
+
         }
         RCLCPP_INFO(this->get_logger(), "Fuse Valid Maps");
+        return true;
 
         
     }
@@ -271,7 +291,7 @@ class BrickMapper : public rclcpp::Node {
         grid_map::GridMap gm_temp;
         gm_temp.setFrameId(MAP_FRAME);
         gm_temp.setGeometry(grid_map::Length(9.0,9.0), 0.02, Eigen::Vector2d(4.0, 4.0));
-        gm_temp.add("clear", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(valid_map->getSize()(0), valid_map->getSize()(1)));
+        gm_temp.add("clear", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
         grid_map::GridMapRosConverter::fromOccupancyGrid(*valid_region_occ_grid, "clear", gm_temp);
         fuseValidMaps(gm_temp);
 
@@ -303,7 +323,7 @@ class BrickMapper : public rclcpp::Node {
                 RCLCPP_WARN(this->get_logger(), "Receiver marker of type %u but need %u, %u, or %u. Continuing, but gridmap may be compromised ...", m.type, m.SPHERE, m.CUBE, m.CYLINDER);
             }
             
-            if(valid_map->atPosition("valid", grid_map::Position(position.x(), position.y())) > 0.5) continue;
+            if(map->atPosition("valid", grid_map::Position(position.x(), position.y())) > 0.5) continue;
 
             if(addKernel(Eigen::Vector2d(position.x(), position.y()) ,m.scale.x, m.scale.y, 2 * std::atan2(t.transform.rotation.z, t.transform.rotation.w), m.scale.z))
                 RCLCPP_DEBUG(this->get_logger(), "Added kernel at (%f,%f) with kernel size (%f,%f)", m.pose.position.x, m.pose.position.y, m.scale.x, m.scale.y);
@@ -315,19 +335,18 @@ class BrickMapper : public rclcpp::Node {
         double max_value = std::numeric_limits<double>::min();
         grid_map::Index max_index;
         for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
-            map->at("bricks", *it) *= DECAY_FACTOR;
+            map->at("bricks", *it) *= state == BrickMapperState::ACTIVE ? DECAY_FACTOR_ACTIVE : DECAY_FACTOR_PASSIVE;
             if(map->at("bricks", *it) < DECAY_THRESH) map->at("bricks", *it) = 0.0;
             if(map->at("bricks", *it) > max_value){
-                std::vector<std::string> keys = valid_map->getLayers();
-                if(keys.size() == 0u) RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "Valid-Map not received yet !");
-                else if(keys.size() > 1u){
-                    RCLCPP_FATAL(this->get_logger(), "Valid-Map consists of %lu>1 layers !", keys.size());
+                std::vector<std::string> keys = map->getLayers();
+                if(keys.size() != 3u){
+                    RCLCPP_FATAL(this->get_logger(), "Valid-Map consists of %lu layers (must be 2) !", keys.size());
                     throw std::runtime_error("Invalid configuration of internal state");
                 }
                 else{
                     grid_map::Position max_candidate_position;
                     map->getPosition(*it, max_candidate_position);
-                    float value = valid_map->atPosition("valid", max_candidate_position);
+                    float value = map->atPosition("valid", max_candidate_position);
                     if(value > 0.5F) continue;
                 }
                 
@@ -339,7 +358,7 @@ class BrickMapper : public rclcpp::Node {
             if(max_value > DETECTION_THRESHOLD){
                 grid_map::Position max_position;
                 this->map->getPosition(max_index, max_position);
-                float value = valid_map->atPosition("valid", max_position);
+                float value = map->atPosition("valid", max_position);
                 if(value > 0.5F) {
                     RCLCPP_WARN(this->get_logger(), "Found maximum brick confidence at %f,%f which is an illegal position. Skipping ...");
                 }
@@ -349,8 +368,7 @@ class BrickMapper : public rclcpp::Node {
                     bool is_path_free = true;
                     if(is_path_free){
                         RCLCPP_INFO(this->get_logger(), "Path is free ! Forwarding to motion control node ...");
-                    RCLCPP_ERROR(this->get_logger(), "TODO");
-
+                        RCLCPP_ERROR(this->get_logger(), "TODO");
                         // INTERRUPT 
                         this->state = BrickMapperState::PASSIVE;
 
@@ -363,15 +381,15 @@ class BrickMapper : public rclcpp::Node {
                 }
             }
         }
-        if(this->state == BrickMapperState::PASSIVE){
-            nav_msgs::msg::OccupancyGrid costmap;
-            grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, OBSTACLE_THRESHOLD, costmap);
-            costmap.header.frame_id = MAP_FRAME;
-            costmap.header.stamp = this->get_clock()->now();
-            cost_map_pub->publish(costmap);
-        }
+        updateObstacleMap();
+
+        nav_msgs::msg::OccupancyGrid costmap;
+        grid_map::GridMapRosConverter::toOccupancyGrid(*map, "obstacle", 0, OBSTACLE_THRESHOLD, costmap);
+        costmap.header.frame_id = MAP_FRAME;
+        costmap.header.stamp = this->get_clock()->now();
+        cost_map_pub->publish(costmap);
+    
         this->main_grid_map_pub->publish(grid_map::GridMapRosConverter::toMessage(*this->map));
-        this->valid_grid_map_pub->publish(grid_map::GridMapRosConverter::toMessage(*this->valid_map));
         this->state_pub->publish(state2stringmsg());
     }
     void bufferMarkerArray(std::shared_ptr<visualization_msgs::msg::MarkerArray> brick_detections){
@@ -420,7 +438,7 @@ class BrickMapper : public rclcpp::Node {
 
 
     rclcpp::TimerBase::SharedPtr process_map_timer;
-    std::shared_ptr<grid_map::GridMap> map, valid_map;
+    std::shared_ptr<grid_map::GridMap> map;
     std::vector<visualization_msgs::msg::Marker> marker_buffer;
     std::mutex marker_buffer_lock;
     
