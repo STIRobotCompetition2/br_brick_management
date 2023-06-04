@@ -31,6 +31,9 @@
 
 
 #include <eigen3/Eigen/Geometry>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include <nav2_msgs/action/compute_path_to_pose.hpp>
+
 
 
 
@@ -104,6 +107,17 @@ class BrickMapper : public rclcpp::Node {
         map->add("bricks", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
         map->add("valid", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
         map->add("obstacle", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
+
+        // compute_path_client_ptr = rclcpp_action::create_client<nav2_msgs::action::ComputePathToPose>(this,"/compute_path_to_pose");
+        // if (!compute_path_client_ptr->wait_for_action_server(std::chrono::seconds(5))) {
+        //     RCLCPP_ERROR(this->get_logger(), "Action server not available");
+        // }
+        // else{
+        //     RCLCPP_INFO(this->get_logger(), "Action server ready!");
+
+        // }
+
+        
         
     }
 
@@ -152,6 +166,7 @@ class BrickMapper : public rclcpp::Node {
             
 
         }
+        return true;
     }
 
     bool fuseValidMaps(const grid_map::GridMap to_process){
@@ -245,6 +260,7 @@ class BrickMapper : public rclcpp::Node {
             fuseValidMaps(gm_temp);
             return true;
         }
+        return true;
 
 
     }
@@ -299,6 +315,7 @@ class BrickMapper : public rclcpp::Node {
     }
 
     void updateMap(){
+        // rclcpp::spin_some(this->get_node_base_interface());
         geometry_msgs::msg::TransformStamped t;
         Eigen::Isometry3d t_eigen;
         Eigen::Vector4d position;
@@ -363,20 +380,29 @@ class BrickMapper : public rclcpp::Node {
                     RCLCPP_WARN(this->get_logger(), "Found maximum brick confidence at %f,%f which is an illegal position. Skipping ...");
                 }
                 else{
-                    RCLCPP_INFO(this->get_logger(), "Found valid maximum at %f %f! Checking if path is free ...", max_position.x(), max_position.y());
+                    RCLCPP_INFO(this->get_logger(), "Found valid maximum at %f %f! Forwarding to motion control node ...", max_position.x(), max_position.y());
+                   
+                    // nav2_msgs::action::ComputePathToPose::Goal goal_msg = nav2_msgs::action::ComputePathToPose::Goal();
+                    // goal_msg.goal.header.frame_id = "arena";
+                    // goal_msg.goal.header.stamp = this->get_clock()->now();
+                    // goal_msg.goal.pose.position.x = max_position.x();
+                    // goal_msg.goal.pose.position.y = max_position.y();
+                    // goal_msg.goal.pose.orientation.w = 1.0;
+                    
+
+                    // // send_goal_options.goal_response_callback = std::bind(&SearchGridFollower::goal_response_callback, this, _1);
+                    // // send_goal_options.result_callback = std::bind(&BrickCollectorBase::executeTrajectoryResultCallback, this, _1);
+                    // // send_goal_options.feedback_callback = std::bind(&BrickCollectorBase::executeTrajectoryFeedbackCallback, this, _1, _2);
+
+                    // auto future = compute_path_client_ptr->async_send_goal(goal_msg, rclcpp_action::Client<nav2_msgs::action::ComputePathToPose>::SendGoalOptions());
+                    // std::cerr << "A";
+                    // rclcpp::spin_until_future_complete(this->get_node_base_interface(), future);
+                    
+
+                    
                     RCLCPP_ERROR(this->get_logger(), "TODO");
-                    bool is_path_free = true;
-                    if(is_path_free){
-                        RCLCPP_INFO(this->get_logger(), "Path is free ! Forwarding to motion control node ...");
-                        RCLCPP_ERROR(this->get_logger(), "TODO");
-                        // INTERRUPT 
-                        this->state = BrickMapperState::PASSIVE;
-
-                    }
-                    else{
-                        RCLCPP_WARN(this->get_logger(), "Path is NOT free ! Doing nothing ...", max_position.x(), max_position.y());
-                    }
-
+                    
+                    this->state = BrickMapperState::PASSIVE;
                     clearRegion(Eigen::Vector2d(max_position.x(), max_position.y()));
                 }
             }
@@ -444,6 +470,8 @@ class BrickMapper : public rclcpp::Node {
     
     std::shared_ptr<tf2_ros::TransformListener> tf_listener{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer;
+
+    // rclcpp_action::Client<nav2_msgs::action::ComputePathToPose>::SharedPtr compute_path_client_ptr;
 
 };
 
