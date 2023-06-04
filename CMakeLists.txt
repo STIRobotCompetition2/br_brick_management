@@ -21,6 +21,9 @@ find_package(nav2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package( OpenCV REQUIRED )
+find_package(std_srvs REQUIRED )
 
 
 
@@ -50,12 +53,13 @@ endif()
 
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/PolygonArrayStamped.msg"
-  DEPENDENCIES geometry_msgs
+  "srv/BrickDetection.srv"
+  DEPENDENCIES visualization_msgs
  )
 
 ament_package()
 
+include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 add_executable(brick_mapper src/brick_mapper.cpp)
 
@@ -72,8 +76,11 @@ ament_target_dependencies(
   tf2_ros
   geometry_msgs
   tf2_eigen
+  cv_bridge
+  std_srvs
 )
 
+target_link_libraries(brick_mapper ${OpenCV_LIBS} )
 
 install(TARGETS
   brick_mapper
