@@ -24,6 +24,8 @@ find_package(tf2_eigen REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package( OpenCV REQUIRED )
 find_package(std_srvs REQUIRED )
+find_package(rclcpp_action REQUIRED )
+find_package(br_brick_management REQUIRED )
 
 
 
@@ -78,6 +80,8 @@ ament_target_dependencies(
   tf2_eigen
   cv_bridge
   std_srvs
+  rclcpp_action
+  br_brick_management
 )
 
 target_link_libraries(brick_mapper ${OpenCV_LIBS} )

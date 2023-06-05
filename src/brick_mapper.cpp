@@ -34,6 +34,9 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <nav2_msgs/action/compute_path_to_pose.hpp>
 
+#include <br_brick_management/srv/brick_detection.hpp>
+
+
 
 
 
@@ -107,6 +110,12 @@ class BrickMapper : public rclcpp::Node {
         map->add("bricks", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
         map->add("valid", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
         map->add("obstacle", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
+
+        brick_detection_client = this->create_client<br_brick_management::srv::BrickDetection>("/brick_detection");
+        RCLCPP_INFO(this->get_logger(), "Wait for brick-detection service ...");
+        brick_detection_client->wait_for_service();
+        RCLCPP_INFO(this->get_logger(), "brick-detection online !");
+
 
         // compute_path_client_ptr = rclcpp_action::create_client<nav2_msgs::action::ComputePathToPose>(this,"/compute_path_to_pose");
         // if (!compute_path_client_ptr->wait_for_action_server(std::chrono::seconds(5))) {
@@ -398,9 +407,14 @@ class BrickMapper : public rclcpp::Node {
                     // std::cerr << "A";
                     // rclcpp::spin_until_future_complete(this->get_node_base_interface(), future);
                     
-
-                    
-                    RCLCPP_ERROR(this->get_logger(), "TODO");
+                    br_brick_management::srv::BrickDetection::Request req;
+                    req.detection.pose.position.x = max_position.x();
+                    req.detection.pose.position.x = max_position.x();
+                    req.detection.pose.orientation.w = 1.;
+                    req.detection.header.frame_id = MAP_FRAME;
+                    req.detection.header.stamp = this->get_clock()->now();
+                    brick_detection_client->async_send_request(std::make_shared<br_brick_management::srv::BrickDetection::Request>(req));
+                    // RCLCPP_ERROR(this->get_logger(), "TODO");
                     
                     this->state = BrickMapperState::PASSIVE;
                     clearRegion(Eigen::Vector2d(max_position.x(), max_position.y()));
@@ -470,6 +484,8 @@ class BrickMapper : public rclcpp::Node {
     
     std::shared_ptr<tf2_ros::TransformListener> tf_listener{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer;
+
+    rclcpp::Client<br_brick_management::srv::BrickDetection>::SharedPtr brick_detection_client;
 
     // rclcpp_action::Client<nav2_msgs::action::ComputePathToPose>::SharedPtr compute_path_client_ptr;
 
