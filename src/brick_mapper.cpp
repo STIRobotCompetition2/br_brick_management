@@ -113,8 +113,10 @@ class BrickMapper : public rclcpp::Node {
 
         brick_detection_client = this->create_client<br_brick_management::srv::BrickDetection>("/brick_detection");
         RCLCPP_INFO(this->get_logger(), "Wait for brick-detection service ...");
-        brick_detection_client->wait_for_service();
-        RCLCPP_INFO(this->get_logger(), "brick-detection online !");
+        while(!brick_detection_client->wait_for_service(std::chrono::seconds(2u))){
+            RCLCPP_WARN(this->get_logger(), "Brick-detection not yet online");
+        }
+        RCLCPP_INFO(this->get_logger(), "brick-detection ONLINE !");
 
 
         // compute_path_client_ptr = rclcpp_action::create_client<nav2_msgs::action::ComputePathToPose>(this,"/compute_path_to_pose");
