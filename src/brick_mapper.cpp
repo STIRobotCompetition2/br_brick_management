@@ -112,11 +112,11 @@ class BrickMapper : public rclcpp::Node {
         map->add("obstacle", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
 
         brick_detection_client = this->create_client<br_brick_management::srv::BrickDetection>("/brick_detection");
-        RCLCPP_INFO(this->get_logger(), "Wait for brick-detection service ...");
+        RCLCPP_INFO(this->get_logger(), "Wait for nav2 commander ...");
         while(!brick_detection_client->wait_for_service(std::chrono::seconds(2u))){
-            RCLCPP_WARN(this->get_logger(), "Brick-detection not yet online");
+            RCLCPP_WARN(this->get_logger(), "nav2 commander not yet online");
         }
-        RCLCPP_INFO(this->get_logger(), "brick-detection ONLINE !");
+        RCLCPP_INFO(this->get_logger(), "nav2 commander ONLINE !");
 
 
         // compute_path_client_ptr = rclcpp_action::create_client<nav2_msgs::action::ComputePathToPose>(this,"/compute_path_to_pose");
