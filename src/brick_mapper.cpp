@@ -411,7 +411,7 @@ class BrickMapper : public rclcpp::Node {
                     
                     br_brick_management::srv::BrickDetection::Request req;
                     req.detection.pose.position.x = max_position.x();
-                    req.detection.pose.position.x = max_position.x();
+                    req.detection.pose.position.y = max_position.y();
                     req.detection.pose.orientation.w = 1.;
                     req.detection.header.frame_id = MAP_FRAME;
                     req.detection.header.stamp = this->get_clock()->now();
