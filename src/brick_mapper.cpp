@@ -36,6 +36,9 @@
 
 #include <br_brick_management/srv/brick_detection.hpp>
 
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
 
 
 
@@ -82,6 +85,7 @@ class BrickMapper : public rclcpp::Node {
         process_map_timer = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&BrickMapper::updateMap, this));
         main_grid_map_pub = this->create_publisher<grid_map_msgs::msg::GridMap>("/brick_grid_map", 1);
         valid_grid_map_pub = this->create_publisher<grid_map_msgs::msg::GridMap>("/valid_grid_map", 1);
+        point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/brick_as_points", 1);
         binarized_result_pub = this->create_publisher<sensor_msgs::msg::CompressedImage>("/binarized_result/compressed", 1);
         floodfill_result_pub = this->create_publisher<sensor_msgs::msg::CompressedImage>("/floodfill_result/compressed", 1);
         state_pub = this->create_publisher<std_msgs::msg::String>("state", 1);
@@ -109,7 +113,7 @@ class BrickMapper : public rclcpp::Node {
         );
         map->add("bricks", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
         map->add("valid", VALID_CODE_OCCUPIED_VALIDMAPPUB * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
-        map->add("obstacle", grid_map::Matrix::Zero(map->getSize()(0), map->getSize()(1)));
+        map->add("obstacle", 0. * grid_map::Matrix::Ones(map->getSize()(0), map->getSize()(1)));
 
         brick_detection_client = this->create_client<br_brick_management::srv::BrickDetection>("/brick_detection");
         RCLCPP_INFO(this->get_logger(), "Wait for nav2 commander ...");
@@ -145,11 +149,11 @@ class BrickMapper : public rclcpp::Node {
             RCLCPP_ERROR(this->get_logger(), "Tried to set active but was already active");
             response->success = false;
             response->message = "Tried to set active but was already active";
-            nav_msgs::msg::OccupancyGrid costmap;
-            grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, std::numeric_limits<double>::max(), costmap);
-            costmap.header.frame_id = MAP_FRAME;
-            costmap.header.stamp = this->get_clock()->now();
-            for(size_t i = 0; i < 5; i++) cost_map_pub->publish(costmap);
+            // nav_msgs::msg::OccupancyGrid costmap;
+            // grid_map::GridMapRosConverter::toOccupancyGrid(*map, "bricks", 0, std::numeric_limits<double>::max(), costmap);
+            // costmap.header.frame_id = MAP_FRAME;
+            // costmap.header.stamp = this->get_clock()->now();
+            // for(size_t i = 0; i < 5; i++) cost_map_pub->publish(costmap);
         }
         else{
             this->state = BrickMapperState::ACTIVE;
@@ -160,6 +164,7 @@ class BrickMapper : public rclcpp::Node {
     }
 
     bool updateObstacleMap(){
+        std::vector<Eigen::Vector2d> obstacle_dummy_points;
         for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
             grid_map::Position position;
             map->getPosition(*it, position);
@@ -168,32 +173,61 @@ class BrickMapper : public rclcpp::Node {
                 continue;
             }
             if(state == BrickMapperState::PASSIVE){
-                if(map->at("bricks", *it) > OBSTACLE_THRESHOLD) map->at("obstacle", *it) = OBSTACLE_THRESHOLD;
+                if(map->at("bricks", *it) > OBSTACLE_THRESHOLD){
+                    obstacle_dummy_points.push_back(Eigen::Vector2d(position.x(), position.y()));
+                }
                 else map->at("obstacle", *it) = 0.0;
             }
             else map->at("obstacle", *it) = 0.0;
-
-
-            
-
         }
+
+        sensor_msgs::msg::PointCloud2 point_cloud;
+        point_cloud.header.frame_id = "arena";
+        point_cloud.header.stamp = this->now();
+        point_cloud.height = 1;
+        point_cloud.width = static_cast<uint32_t>(obstacle_dummy_points.size());
+
+        sensor_msgs::PointCloud2Modifier modifier(point_cloud);
+        modifier.setPointCloud2FieldsByString(1, "xyz");
+        modifier.resize(obstacle_dummy_points.size());
+
+        sensor_msgs::PointCloud2Iterator<float> iter_x(point_cloud, "x");
+        sensor_msgs::PointCloud2Iterator<float> iter_y(point_cloud, "y");
+        sensor_msgs::PointCloud2Iterator<float> iter_z(point_cloud, "z");
+
+        for (const auto& point : obstacle_dummy_points)
+        {
+            *iter_x = point.x();
+            *iter_y = point.y();
+            *iter_z = 0.0F;
+
+            ++iter_x;
+            ++iter_y;
+            ++iter_z;
+        }
+
+        point_cloud_pub->publish(point_cloud);
         return true;
     }
+        
+        
+    
 
     bool fuseValidMaps(const grid_map::GridMap to_process){
         for(grid_map::GridMapIterator it(*map); !it.isPastEnd(); ++it){
             grid_map::Position position;
             map->getPosition(*it, position);
+            // std::cerr << to_process.atPosition("clear", position) << std::endl;
             if(map->at("valid", *it) == VALID_CODE_OCCUPIED_COLLECTED) continue;
             if(to_process.atPosition("clear", position) < 2.5 && to_process.atPosition("clear", position) > 1.5){
                 RCLCPP_DEBUG(this->get_logger(), "Fuse Valid Maps called with clear-region request");
                 map->at("valid", *it) = VALID_CODE_OCCUPIED_COLLECTED;
             }
-            else if(to_process.atPosition("clear", position) > 2.5){
+            else if(to_process.atPosition("clear", position) > 50.){
                 RCLCPP_DEBUG(this->get_logger(), "Fuse Valid Maps called with validmap-pub request");
                 map->at("valid", *it) = VALID_CODE_OCCUPIED_VALIDMAPPUB;
             }
-            else if(to_process.atPosition("clear", position) < 0.5){
+            else{
                 map->at("valid", *it) = VALID_CODE_FREE;
             }
 
@@ -488,6 +522,7 @@ class BrickMapper : public rclcpp::Node {
     std::unique_ptr<tf2_ros::Buffer> tf_buffer;
 
     rclcpp::Client<br_brick_management::srv::BrickDetection>::SharedPtr brick_detection_client;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
 
     // rclcpp_action::Client<nav2_msgs::action::ComputePathToPose>::SharedPtr compute_path_client_ptr;
 
